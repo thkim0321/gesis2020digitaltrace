@@ -1,0 +1,372 @@
+---
+title: "Basic statistics"
+author: "Taehee Kim"
+date: "12/2/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, eval= TRUE, message=FALSE}
+library(rtweet)
+library(dplyr)
+library(ggplot2)
+```
+
+
+# Explore retrieved data
+
+This session introduces how to extract specific information from retrieved data collected via `rtweet`.
+When you collect tweets via `rtweet`, it automatically parse nested lists (json format) returned from Twitter and create a data.frame which is convenient form to handle the data in R. If you set `parse = FALSE` when you request data, `rtweet` gives you data in nest lists. According to `rtweet`, 
+
+>By default, the rtweet parse process returns nearly all bits of information returned from Twitter. However, users may occasionally encounter new or omitted variables. In these rare cases, the nested list object will be the only way to access these variables. 
+
+Let's take a look at actual data returned from Twitter. This example uses 10 recent tweets of Mr.President-elect, Joe Biden (collected at 2nd December). In this case, Twitter first return [*Tweet Object*](https://developer.twitter.com/en/docs/twitter-api/v1/data-dictionary/overview/tweet-object) and `rtweet` parse and store the information into a data.base. 
+
+```{r, eval = FALSE}
+tweets <- get_timelines('JoeBiden', n = 10)
+```
+
+Now let's check what we have now in object `tweets`. 
+```{r, eval = TRUE, echo= FALSE}
+load("biden_recent_10.RData")
+```
+
+
+```{r, eval=TRUE}
+dim(tweets) # We have 90 cols.
+head(tweets[,c(1:5)])
+names(tweets)
+```
+
+
+#### Basic information on tweets
+```{r, eval=TRUE}
+field <- c("created_at", "screen_name", "text","is_retweet", "is_quote", "favorite_count", "reply_to_screen_name", "text")
+print(tweets[1,field], width = Inf)
+```
+
+
+#### User information
+Information about an author of a tweet is also included.  
+```{r, eval=TRUE}
+field <- c("user_id", "screen_name", "friends_count", "followers_count")
+field2 <- 73
+print(tweets[1,field], width = Inf)
+print(tweets[1,c(73:dim(tweets)[2])], width = Inf)
+```
+
+#### Retweet, Quote
+In twitter, there are two ways to pass along other's tweets: retweet and quote. When you simply share tweets posted by others (or your own tweets), that is retweet. When you add additional comments, it becomes quote.  
+
+Let's check which tweets are retweets or quotes.
+```{r, eval = TRUE}
+# Is this retweet or quote?
+tweets[,"is_retweet"]
+tweets[,"is_quote"]
+```
+
+Okay, so second tweets and eighth tweet are retweet and quote tweet, respectively. 
+
+```{r, eval = TRUE}
+# Is this retweet or quote?
+tweets[2, 'text']
+tweets[8, 'text']
+```
+
+
+If a tweet is a retweet or a quote tweet, the information on the original tweet is also included. 
+
+```{r, eval= TRUE}
+field <- grep("retweet", names(tweets))
+names(tweets)[field]
+print(tweets[2, field], width = Inf)
+```
+
+
+```{r, eval= TRUE}
+field <- grep("quote", names(tweets))
+names(tweets)[field]
+print(tweets[8, field], width = Inf)
+```
+
+
+# Example: Compare three different accounts' Twitter activity
+
+```{r, eval= TRUE, echo= FALSE}
+load("party_timeline.RData")
+```
+
+First, let's collect our exemplary data. We compare three German party's offical account.
+```{r, eval = FALSE}
+party.timeline <- get_timelines(c("AfD", "CDU","spdde"), n = 3000)
+save(file = "party_timeline.RData", party.timeline) # save the data if you want
+```
+
+#### The number of tweets we retrieved
+```{r, eval= TRUE}
+# Check the data
+head(party.timeline)[,c(1:4)]
+
+# Table
+dim(party.timeline)
+table(party.timeline$screen_name)
+```
+
+#### Basic information about three accounts
+```{r, eval = TRUE}
+
+ac.info <- party.timeline %>%
+    group_by(screen_name) %>%
+    summarize(user_id[1], name[1], statuses_count[1], account_created_at[1], verified[1],
+              friends_count[1], followers_count[1], description[1])
+print(ac.info, width = Inf)
+```
+
+### Account activity
+#### Original tweets, retweets, quotes, replies
+```{r, eval = TRUE}
+
+twitter_activity <- party.timeline %>%
+  group_by(screen_name) %>%
+  summarise(n(), sum(is_retweet == TRUE), sum(is_quote == TRUE), sum(is.na(reply_to_user_id) == FALSE)) %>%
+  rename("account" = 1, "total" = 2,  "retweets" = 3, "quotes" = 4, "replies" = 5) %>%
+  mutate(original = total - (retweets + quotes + replies))
+
+twitter_activity
+
+
+
+
+# Make a chart. spd's activity
+# https://www.r-graph-gallery.com/128-ring-or-donut-plot.html
+spd_act <- t(twitter_activity[3,3:6])
+spd_act <- as.data.frame(spd_act)
+names(spd_act) <- "n"
+spd_act$fract = spd_act$n / sum(spd_act$n)
+spd_act$perc = spd_act$fract * 100
+spd_act$ymax = cumsum(spd_act$fract)
+spd_act$ymin = c(0, head(spd_act$ymax, n = -1))
+spd_act$label_pos <- (spd_act$ymax + spd_act$ymin) / 2
+spd_act$label = paste0(row.names(spd_act)," ", as.integer(spd_act$perc), "%")
+
+spd_act
+
+ggplot(spd_act, aes(ymax = ymax, ymin = ymin, xmax = 4, xmin = 3, fill = row.names(spd_act))) +
+  geom_rect() +
+  geom_label( x=3.5, aes(y = label_pos, label = label), size = 6) +
+  scale_fill_brewer(palette = 7) +
+  coord_polar(theta="y") +
+  xlim(c(2, 4)) +
+  theme_void() +
+  theme(legend.position = "none")
+
+
+
+
+```
+
+```{r, eval = TRUE}
+
+ori_tweets <- party.timeline %>%
+  filter(is_retweet == FALSE) %>% # remove retweet
+  filter(is.na(reply_to_user_id) == TRUE) %>% # Remove replies
+  filter(is_quote == FALSE)  # remove quote
+  
+ori_tweets %>%
+  filter(created_at > "2020-06-30") %>%
+  group_by(screen_name) %>%
+  summarise(n(), sum(retweet_count), mean(retweet_count))
+
+# Most retweeted tweets
+top_retweet <- ori_tweets %>%
+  group_by(screen_name) %>%
+  arrange(desc(retweet_count), .by_group = TRUE) %>%
+  summarise(text[1:10], retweet_count[1:10]) %>%
+  rename("text" = 2, "retweet_count" = 3)
+print(top_retweet, n = Inf)
+```
+
+
+
+# Plot frequency of tweets
+
+### Static plot
+
+Plotting help us to grasp the trend of tweets. `rtweet` provides function to do it quickly. Let's generate number of daily tweets and plot it. 
+```{r, eval= TRUE}
+# Get daily stats of CDU
+party.timeline %>%
+  filter(screen_name == "CDU") %>%
+  ts_data
+
+
+# Plot using ts_plot
+# ts_plot: Plots tweets data as a time series-like data object
+party.timeline %>% 
+  filter(screen_name == "CDU") %>%
+  ts_plot("days") # interval
+```
+
+Adding functions from `ggplot2`, we can make the plot prettier. In this time, let's compare trends of three party accounts. 
+
+```{r, eval = TRUE}
+
+min <- party.timeline %>%
+  group_by(screen_name) %>%
+  summarize(min(created_at))
+min
+
+gr <- party.timeline %>% 
+  filter(created_at >= "2020-06-30") %>%
+  group_by(screen_name)%>%
+  summarise(n())
+gr
+
+# plot the frequency of tweets for each user over time
+# codes are taken from : https://rtweet.info
+
+party.timeline %>%
+  dplyr::filter(created_at >= "2020-07-01") %>%
+  dplyr::group_by(screen_name) %>%
+  ts_plot("days") + # function in rtweet
+  ggplot2::geom_point() +
+  ggplot2::theme_minimal() + # minimalistic theme
+  ggplot2::theme(
+    legend.title = ggplot2::element_blank(), # draws nothing, and assigns no space.
+    legend.position = "bottom",
+    plot.title = ggplot2::element_text(face = "bold")) + # Font face ("plain", "italic", "bold", "bold.italic")
+  ggplot2::labs(
+    x = NULL, y = NULL,
+    title = "Frequency of Twitter statuses posted by AfD, CDU and SPD",
+    subtitle = "Twitter status (tweet) counts aggregated by day from July ",
+    caption = "\nSource: Data collected from Twitter's REST API via rtweet"
+  )
+
+```
+
+
+### Interactive plot using `plotly`
+
+This section introduces `plotly` which help us to generate interactive plots. For more detail about `plotly`, see [plotly documentation](https://plotly.com/r/getting-started/). 
+
+```{r, eval = FALSE}
+install.packages("plotly")
+library(plotly)
+```
+
+
+```{r, eval = TRUE, echo = FALSE}
+library(plotly)
+```
+
+In this example, let's plot AfD's original tweets' counts and retweet numbers of original tweets (by day). First prepare a data.frame for the plot.
+```{r, eval = TRUE}
+
+fr_daily <- ori_tweets %>%
+  filter(screen_name == "AfD") %>%
+  mutate("created_date" = as.Date(created_at)) %>%
+  group_by(created_date) %>%
+  summarise(n(), sum(retweet_count)) %>%
+  rename("n" = "n()", "rt_n" = "sum(retweet_count)")
+
+
+# Plot oritginal tweets' count
+plot_ly(data = fr_daily, x = ~created_date, y = ~n, type = 'scatter', mode = 'lines+markers') 
+
+
+# Now plot both tweets' count and retweet numbers
+plot_ly(data = fr_daily, x = ~created_date) %>%
+  add_lines(y = ~n, 
+            name = "Original tweets", 
+            type = 'scatter', 
+            mode = 'lines',
+            line = list(shape = "linear")) %>%
+  add_lines(y = ~rt_n, 
+            name = "Retweeted number.", 
+            type = 'scatter', 
+            mode = 'lines', 
+            line = list(shape = "spline"),
+            connectgaps = TRUE) 
+```
+
+Above plot does not look good since two lines are overlapped. Let's set two different y axis. 
+
+```{r, eval = TRUE}
+ay <- list(
+  tickfont = list(color = "red"),
+  overlaying = "y",
+  side = "right",
+  title = "Retweeted",
+  showgrid = FALSE
+)
+
+
+mg <- list(
+  l = 100,
+  r = 100,
+  b = 100,
+  t = 100,
+  pad = 4
+)
+
+
+## Plot
+p <- plot_ly(data = fr_daily, x = ~created_date) %>%
+  add_lines(y = ~n, 
+            name = "Original tweets", 
+            type = 'scatter', 
+            mode = 'lines',
+            line = list(shape = "linear")
+  ) %>%
+  add_lines(y = ~rt_n, 
+            name = "Retweeted number", 
+            yaxis = "y2", 
+            type = 'scatter', 
+            mode = 'lines', 
+            line = list(shape = "spline"),
+            connectgaps = TRUE
+  ) %>%
+  layout(
+    # title = "Double Y Axis", 
+    yaxis2 = ay,
+    #annotations = anno.day,
+    yaxis = list(title = "Original Tweets", range = c(0, 100)),
+    xaxis = list(title = "Date",
+                 type = 'date',
+                 tickformat = "%d %b <br>%Y")
+    ,legend = list(x = 0, y = 0.9),
+    margin = mg
+  )  
+
+p
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
