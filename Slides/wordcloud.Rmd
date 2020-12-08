@@ -1,0 +1,158 @@
+---
+title: "Word cloud"
+author: "Taehee Kim"
+date: "12/6/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, eval = TRUE, message= FALSE}
+library(dplyr)
+library(wordcloud)
+library(RColorBrewer)
+library(tidytext)
+library(SnowballC)
+
+load("rigged_election.RData")
+```
+
+## Preperation
+In this session, we create a word cloud of two goups we detected last session. To do that, we need to extract tweet texts of each group members. Since some of user's texts are stroed in retweet related columns, I create a new dataframe which contain all original tweets as a first step. 
+
+```{r, eval = TRUE}
+
+
+fields <- c("user_id", "status_id", "created_at", "screen_name", "text", "retweet_count", 
+            "is_retweet", "is_quote", "reply_to_user_id")
+
+fields_rt <- c("retweet_user_id", "retweet_status_id", "retweet_created_at", 
+               "retweet_screen_name", "retweet_text", "retweet_retweet_count")
+
+
+tweets <- rigged %>%
+  select(all_of(fields)) %>% # When you write select(fields), you get a warning message.
+  filter(is_retweet == FALSE) %>% # Remove retweets
+  filter(is_quote == FALSE) %>% # Remove quotes
+  filter(is.na(reply_to_user_id) == TRUE) %>% # Remove replies
+  select(-c(is_retweet, is_quote, reply_to_user_id)) # Remove columns we don't need anymore
+
+head(tweets)
+
+tweets_rt <- rigged %>%
+  select(all_of(fields_rt)) %>%
+  filter(is.na(retweet_user_id) == FALSE) # remove if retweet_user_id is NA
+
+head(tweets_rt)
+
+names(tweets_rt) <- names(tweets) # change names of columns of tweets_rt to bind two data.frame.
+
+all_tweets <- bind_rows(tweets, tweets_rt)
+dim(all_tweets)
+
+all_tweets <- distinct(all_tweets, status_id, .keep_all = TRUE) # Remove duplicated ones.
+dim(all_tweets)
+
+
+# Check tweet text
+trump <- all_tweets %>%
+  filter(screen_name == "realDonaldTrump")
+trump$text
+
+sanders <- all_tweets %>%
+  filter(screen_name == "BernieSanders")
+sanders$text
+
+
+# Find red group's tweets
+red_tweets <- all_tweets %>%
+  filter(user_id %in% red)
+
+blue_tweets <- all_tweets %>%
+  filter(user_id %in% blue)
+
+dim(red_tweets)
+dim(blue_tweets)
+
+```
+
+## Plotting word cloud
+Now let's create a word cloud. To do that, we first need to clean up tweet texts. Following example demonstrates cleaning tweets text using regular expression and `gsub()` function. `gsub()` function replace all the matches of a pattern from a string. `gsub(pattern, replacement, string)`.
+
+```{r, eval = TRUE}
+
+# A function for cleaning tweet text
+clean_tweet <- function(tweet_df){
+  text <- tweet_df$text
+  text <- gsub("https\\S*", "", text)  # remove https
+  text <- gsub("@\\S*", "", text) # remove screen_name
+  text <- gsub("[\n]", "", text) # remove line breaks
+  text <- gsub("[[:punct:]]", "", text) # remove punctuation
+  return(text)
+}
+
+```
+
+
+First, we plot word cloud of the blue group.
+```{r, eval=TRUE}
+# Clean text
+blue_tweets$text <- clean_tweet(blue_tweets)
+
+
+tweets_words <- blue_tweets %>%
+  select(text) %>%
+  unnest_tokens(word, text) # Tokenization: break the text into individual tokens
+
+head(tweets_words)
+
+tweets_words <- tweets_words %>%
+  anti_join(stop_words) # remove stop words: a commonly used word (eg., a, the, that) that does not give us much information 
+
+words <- tweets_words %>%
+  count(word, sort = TRUE)
+
+head(count)
+
+set.seed(3)
+wordcloud(words = words$word, 
+          freq = words$n, 
+          random.order = FALSE, 
+          rot.per = 0.35,
+          colors = brewer.pal(8, "Dark2"), 
+          scale = c(4,0.5), 
+          min.freq = 5)
+```
+
+### Exercise
+(1) Plot word cloud of `red` group.
+
+(2-1) Plot word cloud using Donald Trump's recent tweets.
+
+(2-2) Plot word cloud using Joe Biden's recent tweets.
+
+(2-3) Compare the results.
+
+## BONUS: Stemming
+```{r, eval = TRUE}
+# Stemmed version
+
+tweets_words <- blue_tweets %>%
+  select(text) %>%
+  unnest_tokens(word, text)
+
+tweets_words <- tweets_words %>%
+  anti_join(stop_words)
+
+words <- tweets_words %>%
+  mutate(stem = wordStem(word)) %>%
+  count(stem, sort = TRUE)
+
+set.seed(5)
+wordcloud(words = words$stem, freq = words$n, random.order = FALSE, rot.per = 0.35,
+          colors = brewer.pal(8, "Dark2"), scale = c(4,0.5), min.freq = 5)
+
+```
+

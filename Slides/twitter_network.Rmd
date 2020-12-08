@@ -1,0 +1,340 @@
+---
+title: "Network"
+author: "Taehee Kim"
+date: "12/6/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+In this example we use following libraries. Install the libraries in case you have not before.
+We also collect Twitter data using `rtweet`. So make sure you have your twitter token in your system. 
+
+```{r, eval = TRUE, message = FALSE}
+library(rtweet)
+library(dplyr)
+library(plotly)
+library(igraph)
+library(RColorBrewer)
+
+# Create twitter token
+source("0_token.R")
+
+```
+
+
+```{r, eval = FALSE}
+# In case you don't have above packages..
+install.packages("package.name")
+```
+
+In this exampel we tweets containing two keywords "rigged" and "election". This will take about an hour. 
+Q. Why?
+```{r, eval = FALSE}
+# Data collection
+rigged <- search_tweets(q = "rigged election", 
+                        n = 72000, 
+                        retryonratelimit = TRUE,
+                        since = "2020-12-03", 
+                        until = "2020-12-05")
+```
+
+```{r, eval = TRUE, echo = FALSE}
+load("search_rigged_election_20201204.RData")
+load("rigged_election_network2.RData")
+```
+
+Check collected data.
+```{r, eval = TRUE}
+dim(rigged)
+head(rigged)[,1:5]
+
+min(rigged$created_at)
+max(rigged$created_at)
+```
+
+Now let's create a graph object using the data.
+```{r, eval = TRUE}
+
+# Create graph object -----------------------------
+t_rt <- rigged %>%
+  filter(is_retweet == 'TRUE') %>%
+  select(user_id,retweet_user_id,screen_name, retweet_screen_name, verified, retweet_verified)
+
+
+t_rt <- as.matrix(t_rt)
+
+# edges
+edges <- t_rt[,c(1,2)]
+head(edges)
+
+# actors
+actors <- rbind(t_rt[,c(1,3,5)], t_rt[,c(2,4,6)])
+head(actors)
+
+# Check if there are duplicated user_ids
+table(duplicated(actors[,1]))
+length(unique(actors[,1]))
+
+# Remove duplicated ones
+dup <- duplicated(actors[,1])
+actors <- actors[!dup,] # ! is negation.
+```
+
+```{r, eval = FALSE, echo= TRUE}
+# Create a graph object using igraph function
+g <- graph_from_data_frame(edges, directed=TRUE, vertices = actors)
+```
+
+```{r, eval = TRUE}
+# Check graph object
+summary(g)
+```
+
+
+```{r, eval = TRUE}
+# Check Edges and nodes
+V(g)
+E(g)
+
+head(V(g)$screen_name)
+head(V(g)$verified)
+```
+
+
+Let's check if Donald Trump's node is existed in our network.
+```{r, eval = TRUE}
+# Finding Donald Trump
+trump_v <- which(V(g)$screen_name == "realDonaldTrump")
+trump_v
+
+# Trump degree
+degree(g, v = trump_v)
+# Trump indegree
+degree(g, v = trump_v, mode = "in")
+# Trump outdegree
+degree(g, v = trump_v, mode = "out")
+```
+
+
+
+## Centrality 
+Here we calculate three centrality measures: degree, betweenness, closeness. Other centrality can be measured using igraph function. For more detail, check its documentation.
+```{r, eval = TRUE}
+
+# degree
+head(degree(g))
+
+# Plot the degree distribution in a log-log plot
+plot(degree.distribution(g), log = "xy")
+
+# Let's write the degree as a node attribute:
+V(g)$degree <- degree(g)
+V(g)$indegree <- degree(g, mode="in") # The same can be done for in-degree:
+V(g)$outdegree <- degree(g, mode="out") # and out-degree
+
+
+# Chek top 10 nodes by its degree
+V(g)[order(-degree)]$degree[1:10]
+V(g)[order(-degree)]$screen_name[1:10]
+
+# Also check is those accounts are verified one or not
+V(g)[order(-degree)][1:10]$verified
+
+# Also indegree
+V(g)[order(-indegree)][1:10]$screen_name
+V(g)[order(-indegree)][1:10]$verified
+```
+
+
+```{r, eval = FALSE}
+# Closeness and Betweenness
+# It can take couple of minutes!
+V(g)$closeness <- closeness(g, mode = "all") # "all" uses undirected pass.
+V(g)$between <- betweenness(g, directed = FALSE)
+```
+
+```{r, eval = TRUE}
+# Check top 10 nodes by two centrarity measures
+V(g)[order(-closeness)]$screen_name[1:10]
+V(g)[order(-between)]$screen_name[1:10]
+```
+
+
+## Plot graph
+Lets plot our retweet network. igraph does not plot well when it has more than 1,000 of nodes.
+So in this example, we plot a small subset of the graph. 
+```{r, eval = TRUE}
+# simple plot
+
+# Set node color
+V(g)$color <- rgb(239, 249, 222, maxColorValue = 255) # light green
+
+# Get top nodes
+top_nodes <- V(g)[order(-degree)][1:500]
+
+# Create a small graph 
+small.g <- delete.vertices(g, which(!V(g) %in% top_nodes)) # delete nodes if those are not included in 'top_nodes'
+
+# Layout setting. We use Fruchterman Rheingold algorithm for network layout.
+lay <- layout_with_fr(small.g)
+
+small.g <- simplify(small.g)
+plot(small.g, 
+     vertex.label = NA, 
+     vertex.size = 5,
+     edge.arrow.size = 0.1, 
+     edge.arrow.width = 0.3,
+     vertex.color = V(small.g)$color,
+     layout = lay)
+
+
+
+# Plot: Set color ----------------------
+
+# add color
+
+# base color2 # light green
+V(g)$color2 <- rgb(239, 249, 222, maxColorValue = 255) 
+
+
+
+# Add red color to @realDonaldTrump and nodes who retweeted realDonaldTrump
+ok <- V(g)$screen_name == "realDonaldTrump"
+V(g)$color2[ok] <- (rgb(255,179,186, maxColorValue = 255)) # red
+ok2 <- neighbors(g, ok, mode = "in")
+V(g)$color2[ok2] <- (rgb(255,179,186, maxColorValue = 255))
+
+# Add blue color to @BernieSanders and nodes who retweeted BernieSanders
+ok <- V(g)$screen_name == "BernieSanders"
+V(g)$color2[ok] <- rgb(186,225,255, maxColorValue = 255) # blue
+ok2 <- neighbors(g, ok, mode = "in")
+V(g)$color2[ok2] <- rgb(186,225,255, maxColorValue = 255)
+
+
+# check 
+table(V(g)$color2)
+
+
+# Lets plot again.
+
+top_nodes <- V(g)[order(-degree)][1:500]
+small.g <- delete.vertices(g, which(!V(g) %in% top_nodes))
+lay <- layout_with_fr(small.g)
+
+
+small.g <- simplify(small.g)
+plot(small.g, 
+     vertex.size = 5,
+     edge.arrow.size = 0.1, 
+     edge.arrow.width = 0.3,
+     vertex.label = NA,
+     vertex.color = V(small.g)$color2,
+     layout = lay
+     )
+
+mtext("Top 500 users by degree", side = 1)
+
+```
+
+
+## Clustering
+It looks like this network has some clusters. Lets figure out clusters using fast greedy algorithm here. Note that it might take couple of minitues to get the results.
+```{r, eval = FALSE}
+un_g <- as.undirected(g) # it should be undirected graph
+un_g <- simplify(un_g) # remove redundent edges
+
+# Fast greedy algorithm
+fg <- cluster_fast_greedy(un_g)
+```
+
+
+```{r, eval = TRUE}
+# Check how many clusters are detected
+length(fg)
+
+# Check sizes of the clusters
+head(sizes(fg), 30)
+
+# Check modularity
+modularity(fg)
+
+# Check which nodes belongs to which clusters
+head(membership(fg))
+```
+
+The algorithm detects about 700 clusters. But lets look into large clusters which consists more than 1000 nodes.
+
+```{r, eval=TRUE}
+
+# We use community, 1,2,3,4,5,8,12 
+# check plot
+V(g)$label_fg <- NA
+
+for (i in c(1,2,3,4,5,8,12)){
+  ok <- membership(fg) == i
+  str_i <- as.character(i)
+  V(g)$label_fg[ok] <- str_i
+}
+
+table(V(g)$label_fg)
+
+
+# Plot graph with cluster label
+top_nodes <- V(g)[order(-degree)][1:300]
+small.g <- delete.vertices(g, which(!V(g) %in% top_nodes))
+lay <- layout_with_fr(small.g)
+
+small.g <- simplify(small.g)
+
+plot(small.g, 
+     vertex.size = 5,
+     edge.arrow.size = 0.1, 
+     edge.arrow.width = 0.3,
+     vertex.label = V(small.g)$label_fg,
+     vertex.label.cex = 0.4,
+     vertex.color = V(small.g)$color,
+     layout = lay)
+
+mtext("Top 300 verticies by degree", side = 1)
+```
+
+Now I am interested in the discourse of those groups. More concretely, lets look into tweets published by each group members. To do that, lets save user_id of the groups. 
+```{r, eval = TRUE}
+# Group 1: 12, 2 -> red
+# Group 2: 1, 4, 5, 8, 3 -> blue
+
+# Store users id
+# red part
+ok <- (V(g)$label_fg == "12" | V(g)$label_fg == "2")
+red <- V(g)$name[ok]
+red <- red[!is.na(red)]
+length(red)
+
+# blue part
+ok <- (V(g)$label_fg == "1" | 
+         V(g)$label_fg == "4"|
+         V(g)$label_fg == "5"|
+         V(g)$label_fg == "8"|
+         V(g)$label_fg == "3")
+table(ok)
+blue <- V(g)$name[ok]
+blue <- blue[!is.na(blue)]
+length(blue)
+
+```
+
+Let's save R objects for next part, creating a word cloud using Tweets.
+```{r, eval = FALSE}
+save(rigged, g, fg, red, blue, file = "rigged_election.RData")
+```
+
+## Exercise
+Create a **reply network** of the rigged election data.
+
+1. Create graph object containing reply network.
+2. Find out top 10 users by indegree.
+3. Find out top 10 users by outdegree.
+4. Plot a reply network.
